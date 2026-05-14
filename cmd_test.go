@@ -440,7 +440,7 @@ func TestResolveInstallation_ConfigIDFallback(t *testing.T) {
 }
 
 func TestResolveInstallationFromDir_LongestMatch(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := evalSymlinksTempDir(t)
 	sub := filepath.Join(tmp, "a", "b")
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
@@ -468,6 +468,18 @@ func TestResolveInstallationFromDir_LongestMatch(t *testing.T) {
 	}
 }
 
+// evalSymlinksTempDir returns t.TempDir() with symlinks resolved, so that
+// path comparisons against os.Getwd() succeed on platforms (macOS) where
+// the tempdir is symlinked (e.g. /var → /private/var).
+func evalSymlinksTempDir(t *testing.T) string {
+	t.Helper()
+	resolved, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("EvalSymlinks: %v", err)
+	}
+	return resolved
+}
+
 func TestResolveInstallationFromDir_NilConfig(t *testing.T) {
 	override := resolveInstallationFromDir(nil)
 	if override.id != 0 || override.org != "" {
@@ -484,7 +496,7 @@ func TestResolveInstallationFromDir_EmptyDirectories(t *testing.T) {
 }
 
 func TestResolveInstallationFromDir_OrgRule(t *testing.T) {
-	tmp := t.TempDir()
+	tmp := evalSymlinksTempDir(t)
 	cfg := &config.Config{
 		Directories: []config.DirectoryRule{
 			{Path: tmp, Org: "myorg"},
@@ -517,8 +529,8 @@ func TestRun_HelpMentionsDirectories(t *testing.T) {
 }
 
 func TestResolveInstallationFromDir_NoMatch(t *testing.T) {
-	tmp := t.TempDir()
-	other := t.TempDir()
+	tmp := evalSymlinksTempDir(t)
+	other := evalSymlinksTempDir(t)
 
 	cfg := &config.Config{
 		Directories: []config.DirectoryRule{

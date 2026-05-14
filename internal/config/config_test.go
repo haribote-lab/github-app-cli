@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -266,12 +267,13 @@ func TestLoad_DirectoriesValid(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	yml := "app_id: 1\nprivate_key_path: /tmp/k.pem\n" +
-		"directories:\n" +
-		"  - path: /opt/projects/foo\n" +
-		"    installation_id: 11\n" +
-		"  - path: ~/work/bar\n" +
-		"    org: myorg\n"
+	projectsFoo := filepath.Join(tmp, "projects", "foo")
+	yml := fmt.Sprintf("app_id: 1\nprivate_key_path: /tmp/k.pem\n"+
+		"directories:\n"+
+		"  - path: %q\n"+
+		"    installation_id: 11\n"+
+		"  - path: ~/work/bar\n"+
+		"    org: myorg\n", filepath.ToSlash(projectsFoo))
 	if err := os.WriteFile(filepath.Join(dir, configFile), []byte(yml), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -283,8 +285,8 @@ func TestLoad_DirectoriesValid(t *testing.T) {
 	if len(cfg.Directories) != 2 {
 		t.Fatalf("Directories len = %d, want 2", len(cfg.Directories))
 	}
-	if cfg.Directories[0].Path != filepath.Clean("/opt/projects/foo") {
-		t.Errorf("Directories[0].Path = %q", cfg.Directories[0].Path)
+	if cfg.Directories[0].Path != filepath.Clean(projectsFoo) {
+		t.Errorf("Directories[0].Path = %q, want %q", cfg.Directories[0].Path, filepath.Clean(projectsFoo))
 	}
 	wantExpanded := filepath.Join(tmp, "work", "bar")
 	if cfg.Directories[1].Path != wantExpanded {
@@ -450,8 +452,10 @@ func TestLoad_DirectoryRuleWithBothIDAndOrgValid(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	yml := "app_id: 1\nprivate_key_path: /tmp/k.pem\n" +
-		"directories:\n  - path: /opt/foo\n    installation_id: 11\n    org: myorg\n"
+	foo := filepath.Join(tmp, "foo")
+	yml := fmt.Sprintf("app_id: 1\nprivate_key_path: /tmp/k.pem\n"+
+		"directories:\n  - path: %q\n    installation_id: 11\n    org: myorg\n",
+		filepath.ToSlash(foo))
 	if err := os.WriteFile(filepath.Join(dir, configFile), []byte(yml), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -487,14 +491,16 @@ func TestLoad_DirectoriesWhitespaceOrgIsInvalid(t *testing.T) {
 }
 
 func TestSaveAndLoad_RoundTripDirectories(t *testing.T) {
-	setupTestEnv(t)
+	tmp := setupTestEnv(t)
 
+	foo := filepath.Join(tmp, "foo")
+	bar := filepath.Join(tmp, "bar")
 	want := &Config{
 		AppID:          1,
 		PrivateKeyPath: "/tmp/k.pem",
 		Directories: []DirectoryRule{
-			{Path: "/opt/foo", InstallationID: 11},
-			{Path: "/opt/bar", Org: "myorg"},
+			{Path: foo, InstallationID: 11},
+			{Path: bar, Org: "myorg"},
 		},
 	}
 	if err := Save(want); err != nil {
