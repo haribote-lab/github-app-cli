@@ -65,8 +65,9 @@ Environment Variables:
 Resolution Order (highest to lowest precedence):
   1. --installation-id / --org flag
   2. GHA_INSTALLATION_ID / GHA_ORG environment variable
-  3. installation_id in config.yaml
-  4. Auto-detect (works only with single installation)
+  3. directories rule in config.yaml (longest path match against cwd)
+  4. installation_id in config.yaml
+  5. Auto-detect (works only with single installation)
 
 Examples:
   gha configure
@@ -74,6 +75,13 @@ Examples:
   gha --org myorg repo list
   gha --installation-id 12345 issue create --title "Bug"
   GHA_ORG=myorg gha pr list
+
+Per-directory rules (edit ~/.config/github-app-cli/config.yaml):
+  directories:
+    - path: ~/work/orgA
+      installation_id: 11111
+    - path: ~/work/orgB
+      org: orgB
 
 Configuration is stored in ~/.config/github-app-cli/config.yaml
 `)
@@ -243,13 +251,16 @@ func runProxy(args []string) error {
 		return err
 	}
 
+	// 3. Resolve per-directory rule based on cwd
+	dirOverride := resolveInstallationFromDir(cfg)
+
 	jwtToken, err := auth.GenerateJWT(cfg.AppID, cfg.PrivateKeyPath)
 	if err != nil {
 		return fmt.Errorf("generating JWT: %w", err)
 	}
 
-	// 3. Resolve installation ID with precedence: flag > env > config > auto-detect
-	installationID, err := resolveInstallation(jwtToken, flagOverride, envOverride, cfg.InstallationID)
+	// 4. Resolve installation ID with precedence: flag > env > directory > config > auto-detect
+	installationID, err := resolveInstallation(jwtToken, flagOverride, envOverride, dirOverride, cfg.InstallationID)
 	if err != nil {
 		return err
 	}
@@ -263,8 +274,8 @@ func runProxy(args []string) error {
 }
 
 // resolveInstallation determines the installation ID using the precedence chain:
-// flag > env > config > auto-detect.
-func resolveInstallation(jwtToken string, flag, env installationOverride, configID int64) (int64, error) {
+// flag > env > directory > config > auto-detect.
+func resolveInstallation(jwtToken string, flag, env, dir installationOverride, configID int64) (int64, error) {
 	// Flag --installation-id takes highest precedence
 	if flag.id > 0 {
 		return flag.id, nil
@@ -281,12 +292,33 @@ func resolveInstallation(jwtToken string, flag, env installationOverride, config
 	if env.org != "" {
 		return resolveInstallationByOrg(jwtToken, env.org)
 	}
+	// Directory rule (config.directories matching cwd)
+	if dir.id > 0 {
+		return dir.id, nil
+	}
+	if dir.org != "" {
+		return resolveInstallationByOrg(jwtToken, dir.org)
+	}
 	// Config file
 	if configID > 0 {
 		return configID, nil
 	}
 	// Auto-detect
 	return resolveInstallationID(jwtToken)
+}
+
+// resolveInstallationFromDir matches the current working directory against
+// the config's directories list. Returns the empty override on any failure.
+func resolveInstallationFromDir(cfg *config.Config) installationOverride {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return installationOverride{}
+	}
+	rule := cfg.ResolveDirectory(cwd)
+	if rule == nil {
+		return installationOverride{}
+	}
+	return installationOverride{id: rule.InstallationID, org: rule.Org}
 }
 
 func resolveInstallationID(jwtToken string) (int64, error) {
