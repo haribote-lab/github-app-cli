@@ -382,9 +382,10 @@ func TestResolveInstallationFromEnv_Empty(t *testing.T) {
 func TestResolveInstallation_FlagIDWins(t *testing.T) {
 	flag := installationOverride{id: 100}
 	env := installationOverride{id: 200}
+	dir := installationOverride{id: 250}
 	configID := int64(300)
 
-	id, err := resolveInstallation("fake-jwt", flag, env, configID)
+	id, err := resolveInstallation("fake-jwt", flag, env, dir, configID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -396,28 +397,147 @@ func TestResolveInstallation_FlagIDWins(t *testing.T) {
 func TestResolveInstallation_EnvIDWins(t *testing.T) {
 	flag := installationOverride{}
 	env := installationOverride{id: 200}
+	dir := installationOverride{id: 250}
 	configID := int64(300)
 
-	id, err := resolveInstallation("fake-jwt", flag, env, configID)
+	id, err := resolveInstallation("fake-jwt", flag, env, dir, configID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != 200 {
-		t.Errorf("id = %d, want 200 (env should win over config)", id)
+		t.Errorf("id = %d, want 200 (env should win over directory)", id)
+	}
+}
+
+func TestResolveInstallation_DirIDWinsOverConfig(t *testing.T) {
+	flag := installationOverride{}
+	env := installationOverride{}
+	dir := installationOverride{id: 250}
+	configID := int64(300)
+
+	id, err := resolveInstallation("fake-jwt", flag, env, dir, configID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != 250 {
+		t.Errorf("id = %d, want 250 (directory should win over config)", id)
 	}
 }
 
 func TestResolveInstallation_ConfigIDFallback(t *testing.T) {
 	flag := installationOverride{}
 	env := installationOverride{}
+	dir := installationOverride{}
 	configID := int64(300)
 
-	id, err := resolveInstallation("fake-jwt", flag, env, configID)
+	id, err := resolveInstallation("fake-jwt", flag, env, dir, configID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if id != 300 {
 		t.Errorf("id = %d, want 300 (config fallback)", id)
+	}
+}
+
+func TestResolveInstallationFromDir_LongestMatch(t *testing.T) {
+	tmp := t.TempDir()
+	sub := filepath.Join(tmp, "a", "b")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Directories: []config.DirectoryRule{
+			{Path: tmp, InstallationID: 100},
+			{Path: filepath.Join(tmp, "a"), InstallationID: 200},
+		},
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(sub); err != nil {
+		t.Fatal(err)
+	}
+
+	override := resolveInstallationFromDir(cfg)
+	if override.id != 200 {
+		t.Errorf("id = %d, want 200 (longest match)", override.id)
+	}
+}
+
+func TestResolveInstallationFromDir_NilConfig(t *testing.T) {
+	override := resolveInstallationFromDir(nil)
+	if override.id != 0 || override.org != "" {
+		t.Errorf("nil cfg should give empty override, got %+v", override)
+	}
+}
+
+func TestResolveInstallationFromDir_EmptyDirectories(t *testing.T) {
+	cfg := &config.Config{}
+	override := resolveInstallationFromDir(cfg)
+	if override.id != 0 || override.org != "" {
+		t.Errorf("empty directories should give empty override, got %+v", override)
+	}
+}
+
+func TestResolveInstallationFromDir_OrgRule(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := &config.Config{
+		Directories: []config.DirectoryRule{
+			{Path: tmp, Org: "myorg"},
+		},
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	override := resolveInstallationFromDir(cfg)
+	if override.id != 0 || override.org != "myorg" {
+		t.Errorf("override = %+v, want org=myorg", override)
+	}
+}
+
+func TestRun_HelpMentionsDirectories(t *testing.T) {
+	stdout, _, code := runCmd(t, []string{"gha", "--help"}, "")
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(stdout, "directories") {
+		t.Errorf("help should mention directories rules: %s", stdout)
+	}
+}
+
+func TestResolveInstallationFromDir_NoMatch(t *testing.T) {
+	tmp := t.TempDir()
+	other := t.TempDir()
+
+	cfg := &config.Config{
+		Directories: []config.DirectoryRule{
+			{Path: other, InstallationID: 100},
+		},
+	}
+
+	prev, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+
+	override := resolveInstallationFromDir(cfg)
+	if override.id != 0 || override.org != "" {
+		t.Errorf("expected empty override, got id=%d org=%q", override.id, override.org)
 	}
 }
 

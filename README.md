@@ -62,6 +62,33 @@ If Installation ID is omitted, `gha` automatically resolves it via the GitHub AP
 
 Configuration is saved to `~/.config/github-app-cli/config.yaml` (respects `XDG_CONFIG_HOME`).
 
+### Per-directory rules
+
+You can switch installations automatically based on the current working directory — handy when running coding agents (Claude Code, Codex, etc.) across multiple projects. Add a `directories` section to `~/.config/github-app-cli/config.yaml`:
+
+```yaml
+app_id: 12345
+private_key_path: ~/.config/github-app-cli/app.pem
+
+directories:
+  - path: ~/work/orgA
+    installation_id: 11111
+  - path: ~/work/orgB
+    org: orgB
+  - path: ~/work/orgA/special-repo
+    installation_id: 22222
+```
+
+When `gha` runs, it walks up from the current directory and picks the longest matching `path`. In the example above, running inside `~/work/orgA/special-repo/subdir` uses installation `22222`, while `~/work/orgA/other` uses `11111`.
+
+Resolution precedence (highest to lowest):
+
+1. `--installation-id` / `--org` flag
+2. `GHA_INSTALLATION_ID` / `GHA_ORG` env var
+3. `directories` rule matching cwd
+4. `installation_id` in config.yaml
+5. Auto-detect (single installation only)
+
 ## Usage
 
 Use `gha` exactly like `gh` — all arguments are passed through:

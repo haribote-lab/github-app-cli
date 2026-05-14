@@ -17,9 +17,19 @@ const (
 
 // Config holds GitHub App credentials.
 type Config struct {
-	AppID          int64  `yaml:"app_id"`
-	InstallationID int64  `yaml:"installation_id"`
-	PrivateKeyPath string `yaml:"private_key_path"`
+	AppID          int64           `yaml:"app_id"`
+	InstallationID int64           `yaml:"installation_id"`
+	PrivateKeyPath string          `yaml:"private_key_path"`
+	Directories    []DirectoryRule `yaml:"directories,omitempty"`
+}
+
+// DirectoryRule overrides installation selection when the working directory
+// is at or under Path. Path may use a leading "~/" to refer to the home
+// directory and must otherwise be absolute.
+type DirectoryRule struct {
+	Path           string `yaml:"path"`
+	InstallationID int64  `yaml:"installation_id,omitempty"`
+	Org            string `yaml:"org,omitempty"`
 }
 
 // Dir returns the configuration directory path, respecting XDG_CONFIG_HOME.
@@ -67,7 +77,80 @@ func Load() (*Config, error) {
 	}
 	cfg.PrivateKeyPath = filepath.Clean(strings.TrimSpace(cfg.PrivateKeyPath))
 
+	for i, rule := range cfg.Directories {
+		path := strings.TrimSpace(rule.Path)
+		if path == "" {
+			return nil, fmt.Errorf("directories[%d].path is required", i)
+		}
+		if rule.InstallationID < 0 {
+			return nil, fmt.Errorf("directories[%d].installation_id must not be negative", i)
+		}
+		if rule.InstallationID == 0 && strings.TrimSpace(rule.Org) == "" {
+			return nil, fmt.Errorf("directories[%d]: either installation_id or org is required", i)
+		}
+		expanded, err := expandPath(path)
+		if err != nil {
+			return nil, fmt.Errorf("directories[%d].path: %w", i, err)
+		}
+		if !filepath.IsAbs(expanded) {
+			return nil, fmt.Errorf("directories[%d].path must be absolute or start with ~/: %s", i, rule.Path)
+		}
+		cfg.Directories[i].Path = filepath.Clean(expanded)
+		cfg.Directories[i].Org = strings.TrimSpace(rule.Org)
+	}
+
 	return &cfg, nil
+}
+
+// ResolveDirectory returns the rule whose Path is the longest ancestor of
+// (or equal to) cwd. Returns nil if no rule matches.
+func (c *Config) ResolveDirectory(cwd string) *DirectoryRule {
+	if c == nil || len(c.Directories) == 0 || cwd == "" {
+		return nil
+	}
+	cleanCwd := filepath.Clean(cwd)
+
+	var best *DirectoryRule
+	bestLen := -1
+	for i := range c.Directories {
+		rule := &c.Directories[i]
+		if !isAncestorOrEqual(rule.Path, cleanCwd) {
+			continue
+		}
+		if len(rule.Path) > bestLen {
+			best = rule
+			bestLen = len(rule.Path)
+		}
+	}
+	return best
+}
+
+// isAncestorOrEqual reports whether ancestor == target or ancestor is a
+// parent directory of target. Both paths must be cleaned.
+func isAncestorOrEqual(ancestor, target string) bool {
+	if ancestor == target {
+		return true
+	}
+	sep := string(filepath.Separator)
+	prefix := ancestor
+	if !strings.HasSuffix(prefix, sep) {
+		prefix += sep
+	}
+	return strings.HasPrefix(target, prefix)
+}
+
+func expandPath(path string) (string, error) {
+	if strings.HasPrefix(path, "~/") || path == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		if path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, path[2:]), nil
+	}
+	return path, nil
 }
 
 // Save writes configuration to disk with secure file permissions.
